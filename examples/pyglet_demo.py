@@ -5,6 +5,11 @@ from pyglet.gl import *
 from pynocchio import auto_rig, Mesh, Vector3, Transform, VectorTransform, Points
 from pynocchio import skeletons
 
+# SMPL imports
+from smplx import SMPL
+import numpy as np
+import torch
+import pickle
 
 class Animation:
     def __init__(self, transforms_count, axis, stretch, delta):
@@ -85,15 +90,67 @@ class Bones:
         self._batch.draw()
 
 
-human_mesh = Mesh('data/sveta.obj')
-human_skeleton = skeletons.HumanSkeleton()
-human_skeleton.scale(0.7)
-attach = auto_rig(human_skeleton, human_mesh)
+# human_mesh = Mesh('data/sveta.obj')
+# human_skeleton = skeletons.HumanSkeleton()
+# human_skeleton.scale(0.7)
+# attach = auto_rig(human_skeleton, human_mesh)
 
-model = Model(human_mesh)
-bones = Bones(human_skeleton, attach.embedding)
+# model = Model(human_mesh)
+# bones = Bones(human_skeleton, attach.embedding)
+# window = pyglet.window.Window()
+# animation = Animation(len(attach.embedding), 0, 0.5, 0.05)
+
+
+
+# Define the SMPL model and get the joint locations 
+import smplx
+smpl_path = '/home/kulendu/rabit_kulendu/pynocchio/data/SMPL_NEUTRAL.pkl'
+smpl = smplx.create(model_path=smpl_path, model_type='smpl', gender='neutral', create_transl=False)
+
+betas = torch.zeros(1, 10) 
+body_pose = torch.zeros(1, 69)  
+global_orient = torch.zeros(1, 3)  
+
+output = smpl(betas=betas, body_pose=body_pose, global_orient=global_orient, return_verts=True)
+
+
+# getting the parent joint
+with open(smpl_path, 'rb') as f:
+    smpl_model_data = pickle.load(f, encoding='latin1')
+
+kintree_table = smpl_model_data['kintree_table']
+parent_joints = kintree_table[0] 
+
+for idx, parent_joint in enumerate(parent_joints):
+    print(f"{idx} {parent_joint}")
+
+joints = output.joints.squeeze(0)[:24] # First 24 joints for the SMPL model
+breakpoint()
+
+# dumping the joint info in a file
+def joint_dump(filename):
+    print(f"----- Saving the joint info in {filename} ---------")
+    with open(filename, 'w') as file:
+        for parent, (idx, joint) in zip(parent_joints, enumerate(joints)):
+            line = f"{idx} {joint[0]} {joint[1]} {joint[2]} {parent}\n"
+            file.write(line)
+
+    print(f"----- Saved Successfully! ---------")
+
+# joint_dump('smpl_skeleton_new.out')
+
+
+# Define Mesh and Skeleton for RaBit
+rabit_mesh = Mesh('data/rabit.obj')
+rabit_skeleton = skeletons.FileSkeleton('smpl_skeleton_new.out')
+rabit_skeleton.scale(0.7)
+attach = auto_rig(rabit_skeleton, rabit_mesh)
+
+model = Model(rabit_mesh)
+bones = Bones(rabit_skeleton, attach.embedding)
 window = pyglet.window.Window()
 animation = Animation(len(attach.embedding), 0, 0.5, 0.05)
+
 
 
 def setup():
@@ -104,14 +161,14 @@ def setup():
 def update(dt):
     transforms = animation.step()
 
-    mesh_transformed = attach.deform(human_mesh, transforms)
+    mesh_transformed = attach.deform(rabit_mesh, transforms)
     model.update(mesh_transformed)
 
     embedding_transformed = Points()
     embedding_transformed.append(attach.embedding[0])
     for i in range(1, len(transforms)):
         embedding_transformed.append(transforms[i - 1] * attach.embedding[i])
-    bones.update(human_skeleton, embedding_transformed)
+    bones.update(rabit_skeleton, embedding_transformed)
 
 
 @window.event
